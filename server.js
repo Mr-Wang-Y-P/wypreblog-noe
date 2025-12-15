@@ -4,11 +4,16 @@ import bodyParser from 'body-parser';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+// 获取当前文件的目录名
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 7894;
-const DATA_FILE = path.join(process.cwd(), 'posts.json');
-const TALK_FILE = path.join(process.cwd(), 'talk.json');
+const DATA_FILE = path.join(__dirname, 'posts.json');
+const TALK_FILE = path.join(__dirname, 'talk.json');
 
 // 启用 CORS 允许前端跨域请求
 app.use(cors());
@@ -59,14 +64,28 @@ const readTalkData = () => {
   }
 };
 
-// Helper to write talk data
+// Helper to write talk data with enhanced error handling
 const writeTalkData = (data) => {
   try {
+    // 确保目录存在
+    const dir = path.dirname(TALK_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    // 写入文件
     fs.writeFileSync(TALK_FILE, JSON.stringify(data, null, 2), 'utf8');
     console.log(`[SUCCESS] Talk data written to ${TALK_FILE}`);
     return true;
   } catch (err) {
     console.error('[ERROR] Failed to write talk file:', err);
+    // 提供更详细的错误信息
+    console.error('[ERROR] Error details:', {
+      code: err.code,
+      message: err.message,
+      path: TALK_FILE,
+      permissions: fs.constants.W_OK
+    });
     return false;
   }
 };
@@ -184,7 +203,22 @@ app.post('/api/talk', (req, res) => {
   if (writeTalkData(talks)) {
     res.json(message);
   } else {
-    res.status(500).json({ message: 'Failed to save message to disk' });
+    res.status(500).json({ 
+      message: 'Failed to save message to disk',
+      // 添加更多调试信息
+      debug: {
+        talkFilePath: TALK_FILE,
+        talkFileExists: fs.existsSync(TALK_FILE),
+        talkFileWritable: fs.accessSync ? (() => {
+          try {
+            fs.accessSync(TALK_FILE, fs.constants.W_OK);
+            return true;
+          } catch {
+            return false;
+          }
+        })() : 'accessSync not available'
+      }
+    });
   }
 });
 
