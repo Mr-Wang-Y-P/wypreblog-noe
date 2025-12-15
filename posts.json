@@ -1,0 +1,35 @@
+[
+  {
+    "slug": "welcome",
+    "title": "Welcome to wyperBlog",
+    "date": "2024-06-11",
+    "tags": [
+      "meta",
+      "welcome"
+    ],
+    "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=cyberpunk,city&width=800&height=450&random=welcome",
+    "content": "# 欢迎来到 wyperBlog\n\n这是第一篇示例文章，展示了炫酷的首页与 Markdown 渲染能力。\n\n## 特性\n\n- 支持 **粗体** 与 *斜体*\n- 支持代码块：\n\n```js\nconsole.log('hello wyperBlog');\n```\n\n> 期待你的第一篇投稿！"
+  },
+  {
+    "slug": "react-hooks-deep-dive",
+    "title": "React Hooks 深度解析",
+    "date": "2024-06-10",
+    "tags": [
+      "react",
+      "frontend"
+    ],
+    "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=code,react&width=800&height=450&random=react",
+    "content": "# React Hooks 深度解析\n\n本文深入 useEffect、useMemo、useCallback 的原理与最佳实践。"
+  },
+  {
+    "slug": "future-of-tech",
+    "title": "科技的未来：AI 与人类",
+    "date": "2024-06-12",
+    "tags": [
+      "ai",
+      "future"
+    ],
+    "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=robot,ai&width=800&height=450&random=ai",
+    "content": "# 科技的未来\n\n探讨人工智能如何重塑我们的生活方式。"
+  }
+]

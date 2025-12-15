@@ -1,0 +1,199 @@
+import express from 'express';
+import cors from 'cors';
+import bodyParser from 'body-parser';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+
+const app = express();
+const PORT = 7894;
+const DATA_FILE = path.join(process.cwd(), 'posts.json');
+const TALK_FILE = path.join(process.cwd(), 'talk.json');
+
+// 启用 CORS 允许前端跨域请求
+app.use(cors());
+// 增加 payload 限制，防止大图片/长文章导致请求失败
+app.use(bodyParser.json({ limit: '50mb' }));
+
+// Helper to read data
+const readData = () => {
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      // 如果文件不存在，初始化为空数组
+      fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+      return [];
+    }
+    const data = fs.readFileSync(DATA_FILE, 'utf8');
+    return JSON.parse(data || '[]');
+  } catch (err) {
+    console.error('Error reading data file:', err);
+    return [];
+  }
+};
+
+// Helper to write data
+const writeData = (data) => {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`[SUCCESS] Data written to ${DATA_FILE}`);
+    return true;
+  } catch (err) {
+    console.error('[ERROR] Failed to write data file:', err);
+    return false;
+  }
+};
+
+// Helper to read talk data
+const readTalkData = () => {
+  try {
+    if (!fs.existsSync(TALK_FILE)) {
+      // 如果文件不存在，初始化为空数组
+      fs.writeFileSync(TALK_FILE, '[]', 'utf8');
+      return [];
+    }
+    const data = fs.readFileSync(TALK_FILE, 'utf8');
+    return JSON.parse(data || '[]');
+  } catch (err) {
+    console.error('Error reading talk file:', err);
+    return [];
+  }
+};
+
+// Helper to write talk data
+const writeTalkData = (data) => {
+  try {
+    fs.writeFileSync(TALK_FILE, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`[SUCCESS] Talk data written to ${TALK_FILE}`);
+    return true;
+  } catch (err) {
+    console.error('[ERROR] Failed to write talk file:', err);
+    return false;
+  }
+};
+
+// Helper to get client IP address
+const getClientIP = (req) => {
+  // 尝试从各种可能的头部获取真实IP地址
+  return req.headers['x-forwarded-for'] ||
+         req.headers['x-real-ip'] ||
+         req.connection.remoteAddress ||
+         req.socket.remoteAddress ||
+         (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
+         req.ip;
+};
+
+// Helper to encrypt IP address as username
+const encryptIP = (ip) => {
+  // 使用 SHA-256 哈希函数加密 IP 地址
+  const hash = crypto.createHash('sha256');
+  hash.update(ip);
+  const encrypted = hash.digest('hex').substring(0, 12); // 取前12位作为用户名
+  return `user_${encrypted}`;
+};
+
+// GET current user info
+app.get('/api/talk/current-user', (req, res) => {
+  const clientIP = getClientIP(req) || 'unknown';
+  const username = encryptIP(clientIP);
+  res.json({ user: username });
+});
+
+// GET all posts
+app.get('/api/posts', (req, res) => {
+  console.log(`[GET] /api/posts - ${new Date().toISOString()}`);
+  const posts = readData();
+  res.json(posts);
+});
+
+// GET single post
+app.get('/api/posts/:slug', (req, res) => {
+  console.log(`[GET] /api/posts/${req.params.slug}`);
+  const posts = readData();
+  const post = posts.find(p => p.slug === req.params.slug);
+  if (post) {
+    res.json(post);
+  } else {
+    res.status(404).json({ message: 'Post not found' });
+  }
+});
+
+// POST create/update post
+app.post('/api/posts', (req, res) => {
+  console.log(`[POST] /api/posts - Receiving data...`);
+  const newPost = req.body;
+  
+  if (!newPost || !newPost.slug) {
+    return res.status(400).json({ message: 'Invalid post data' });
+  }
+
+  const posts = readData();
+  const existingIndex = posts.findIndex(p => p.slug === newPost.slug);
+  
+  if (existingIndex >= 0) {
+    console.log(`[UPDATE] Updating post: ${newPost.title}`);
+    posts[existingIndex] = newPost;
+  } else {
+    console.log(`[CREATE] Creating new post: ${newPost.title}`);
+    posts.unshift(newPost);
+  }
+  
+  if (writeData(posts)) {
+    res.json(newPost);
+  } else {
+    res.status(500).json({ message: 'Failed to save post to disk' });
+  }
+});
+
+// GET all talk messages
+app.get('/api/talk', (req, res) => {
+  console.log(`[GET] /api/talk - ${new Date().toISOString()}`);
+  const talks = readTalkData();
+  res.json(talks);
+});
+
+// POST new talk message
+app.post('/api/talk', (req, res) => {
+  console.log(`[POST] /api/talk - Receiving message...`);
+  const newMessage = req.body;
+  
+  if (!newMessage || !newMessage.content) {
+    return res.status(400).json({ message: 'Invalid message data' });
+  }
+
+  // 获取客户端IP并加密作为用户名
+  const clientIP = getClientIP(req) || 'unknown';
+  const username = encryptIP(clientIP);
+  
+  // 创建新消息对象
+  const message = {
+    id: Date.now(),
+    time: new Date().toISOString(),
+    user: username, // 使用加密后的用户名而不是固定的'guest'
+    avatar: `https://www.weavefox.cn/api/bolt/unsplash_image?keyword=avatar&width=100&height=100&random=${username}`,
+    content: newMessage.content
+  };
+
+  const talks = readTalkData();
+  talks.push(message);
+  
+  // 只保留最新的50条消息
+  if (talks.length > 50) {
+    talks.shift();
+  }
+  
+  if (writeTalkData(talks)) {
+    res.json(message);
+  } else {
+    res.status(500).json({ message: 'Failed to save message to disk' });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`
+  🚀 Server running on http://localhost:${PORT}
+  📂 Data file: ${DATA_FILE}
+  💬 Talk file: ${TALK_FILE}
+  -----------------------------------------------
+  Ready to accept requests from wyperBlog frontend
+  `);
+});
