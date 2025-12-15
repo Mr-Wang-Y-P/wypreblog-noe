@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import fs from 'fs';
+import { readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -15,20 +16,23 @@ const PORT = 7894;
 const DATA_FILE = path.join(__dirname, 'posts.json');
 const TALK_FILE = path.join(__dirname, 'talk.json');
 
+// 内存存储用于临时存储消息（当文件系统不可写时）
+let talkDataMemory = [];
+
 // 启用 CORS 允许前端跨域请求
 app.use(cors());
 // 增加 payload 限制，防止大图片/长文章导致请求失败
 app.use(bodyParser.json({ limit: '50mb' }));
 
 // Helper to read data
-const readData = () => {
+const readData = async () => {
   try {
     if (!fs.existsSync(DATA_FILE)) {
       // 如果文件不存在，初始化为空数组
-      fs.writeFileSync(DATA_FILE, '[]', 'utf8');
+      await writeFile(DATA_FILE, '[]', 'utf8');
       return [];
     }
-    const data = fs.readFileSync(DATA_FILE, 'utf8');
+    const data = await readFile(DATA_FILE, 'utf8');
     return JSON.parse(data || '[]');
   } catch (err) {
     console.error('Error reading data file:', err);
@@ -37,9 +41,9 @@ const readData = () => {
 };
 
 // Helper to write data
-const writeData = (data) => {
+const writeData = async (data) => {
   try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+    await writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
     console.log(`[SUCCESS] Data written to ${DATA_FILE}`);
     return true;
   } catch (err) {
@@ -48,45 +52,62 @@ const writeData = (data) => {
   }
 };
 
-// Helper to read talk data
-const readTalkData = () => {
+// Helper to check if file is writable
+const isFileWritable = (filePath) => {
   try {
-    if (!fs.existsSync(TALK_FILE)) {
-      // 如果文件不存在，初始化为空数组
-      fs.writeFileSync(TALK_FILE, '[]', 'utf8');
-      return [];
-    }
-    const data = fs.readFileSync(TALK_FILE, 'utf8');
-    return JSON.parse(data || '[]');
+    fs.accessSync(filePath, fs.constants.W_OK);
+    return true;
   } catch (err) {
-    console.error('Error reading talk file:', err);
-    return [];
+    return false;
   }
 };
 
-// Helper to write talk data with enhanced error handling
-const writeTalkData = (data) => {
-  try {
-    // 确保目录存在
-    const dir = path.dirname(TALK_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+// Helper to read talk data
+const readTalkData = async () => {
+  // 首先检查是否可以访问文件系统
+  if (fs.existsSync(TALK_FILE) && isFileWritable(TALK_FILE)) {
+    try {
+      const data = await readFile(TALK_FILE, 'utf8');
+      return JSON.parse(data || '[]');
+    } catch (err) {
+      console.error('Error reading talk file:', err);
+      // 回退到内存存储
+      return talkDataMemory;
     }
-    
-    // 写入文件
-    fs.writeFileSync(TALK_FILE, JSON.stringify(data, null, 2), 'utf8');
-    console.log(`[SUCCESS] Talk data written to ${TALK_FILE}`);
+  } else {
+    // 如果文件不可访问，使用内存存储
+    console.log('[INFO] Using memory storage for talk data');
+    return talkDataMemory;
+  }
+};
+
+// Helper to write talk data with fallback to memory
+const writeTalkData = async (data) => {
+  // 尝试写入文件系统
+  if (isFileWritable(TALK_FILE)) {
+    try {
+      // 确保目录存在
+      const dir = path.dirname(TALK_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      
+      // 写入文件
+      await writeFile(TALK_FILE, JSON.stringify(data, null, 2), 'utf8');
+      console.log(`[SUCCESS] Talk data written to ${TALK_FILE}`);
+      return true;
+    } catch (err) {
+      console.error('[ERROR] Failed to write talk file:', err);
+      // 出错时回退到内存存储
+      talkDataMemory = data;
+      console.log('[INFO] Falling back to memory storage for talk data');
+      return true; // 返回true表示数据已保存（在内存中）
+    }
+  } else {
+    // 文件系统不可写，直接使用内存存储
+    talkDataMemory = data;
+    console.log('[INFO] Using memory storage for talk data (filesystem not writable)');
     return true;
-  } catch (err) {
-    console.error('[ERROR] Failed to write talk file:', err);
-    // 提供更详细的错误信息
-    console.error('[ERROR] Error details:', {
-      code: err.code,
-      message: err.message,
-      path: TALK_FILE,
-      permissions: fs.constants.W_OK
-    });
-    return false;
   }
 };
 
@@ -118,16 +139,16 @@ app.get('/api/talk/current-user', (req, res) => {
 });
 
 // GET all posts
-app.get('/api/posts', (req, res) => {
+app.get('/api/posts', async (req, res) => {
   console.log(`[GET] /api/posts - ${new Date().toISOString()}`);
-  const posts = readData();
+  const posts = await readData();
   res.json(posts);
 });
 
 // GET single post
-app.get('/api/posts/:slug', (req, res) => {
+app.get('/api/posts/:slug', async (req, res) => {
   console.log(`[GET] /api/posts/${req.params.slug}`);
-  const posts = readData();
+  const posts = await readData();
   const post = posts.find(p => p.slug === req.params.slug);
   if (post) {
     res.json(post);
@@ -137,7 +158,7 @@ app.get('/api/posts/:slug', (req, res) => {
 });
 
 // POST create/update post
-app.post('/api/posts', (req, res) => {
+app.post('/api/posts', async (req, res) => {
   console.log(`[POST] /api/posts - Receiving data...`);
   const newPost = req.body;
   
@@ -145,7 +166,7 @@ app.post('/api/posts', (req, res) => {
     return res.status(400).json({ message: 'Invalid post data' });
   }
 
-  const posts = readData();
+  const posts = await readData();
   const existingIndex = posts.findIndex(p => p.slug === newPost.slug);
   
   if (existingIndex >= 0) {
@@ -156,7 +177,7 @@ app.post('/api/posts', (req, res) => {
     posts.unshift(newPost);
   }
   
-  if (writeData(posts)) {
+  if (await writeData(posts)) {
     res.json(newPost);
   } else {
     res.status(500).json({ message: 'Failed to save post to disk' });
@@ -164,14 +185,14 @@ app.post('/api/posts', (req, res) => {
 });
 
 // GET all talk messages
-app.get('/api/talk', (req, res) => {
+app.get('/api/talk', async (req, res) => {
   console.log(`[GET] /api/talk - ${new Date().toISOString()}`);
-  const talks = readTalkData();
+  const talks = await readTalkData();
   res.json(talks);
 });
 
 // POST new talk message
-app.post('/api/talk', (req, res) => {
+app.post('/api/talk', async (req, res) => {
   console.log(`[POST] /api/talk - Receiving message...`);
   const newMessage = req.body;
   
@@ -192,7 +213,7 @@ app.post('/api/talk', (req, res) => {
     content: newMessage.content
   };
 
-  const talks = readTalkData();
+  const talks = await readTalkData();
   talks.push(message);
   
   // 只保留最新的50条消息
@@ -200,23 +221,15 @@ app.post('/api/talk', (req, res) => {
     talks.shift();
   }
   
-  if (writeTalkData(talks)) {
+  if (await writeTalkData(talks)) {
     res.json(message);
   } else {
     res.status(500).json({ 
-      message: 'Failed to save message to disk',
-      // 添加更多调试信息
+      message: 'Failed to save message',
       debug: {
         talkFilePath: TALK_FILE,
         talkFileExists: fs.existsSync(TALK_FILE),
-        talkFileWritable: fs.accessSync ? (() => {
-          try {
-            fs.accessSync(TALK_FILE, fs.constants.W_OK);
-            return true;
-          } catch {
-            return false;
-          }
-        })() : 'accessSync not available'
+        talkFileWritable: isFileWritable(TALK_FILE)
       }
     });
   }
