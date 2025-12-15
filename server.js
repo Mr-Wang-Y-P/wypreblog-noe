@@ -16,6 +16,13 @@ const PORT = 7894;
 const DATA_FILE = path.join(__dirname, 'posts.json');
 const TALK_FILE = path.join(__dirname, 'talk.json');
 
+// 内存缓存，避免频繁读取文件
+let postsCache = null;
+let talkCache = null;
+let lastPostsRead = 0;
+let lastTalkRead = 0;
+const CACHE_DURATION = 1000; // 1秒缓存
+
 // 内存存储用于临时存储消息（当文件系统不可写时）
 let talkDataMemory = [];
 
@@ -24,19 +31,32 @@ app.use(cors());
 // 增加 payload 限制，防止大图片/长文章导致请求失败
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// Helper to read data
+// Helper to read data with caching
 const readData = async () => {
+  const now = Date.now();
+  // 如果有缓存且未过期，直接返回缓存数据
+  if (postsCache !== null && (now - lastPostsRead) < CACHE_DURATION) {
+    return postsCache;
+  }
+  
   try {
     if (!fs.existsSync(DATA_FILE)) {
       // 如果文件不存在，初始化为空数组
       await writeFile(DATA_FILE, '[]', 'utf8');
-      return [];
+      postsCache = [];
+      lastPostsRead = now;
+      return postsCache;
     }
+    
     const data = await readFile(DATA_FILE, 'utf8');
-    return JSON.parse(data || '[]');
+    const parsedData = JSON.parse(data || '[]');
+    postsCache = parsedData;
+    lastPostsRead = now;
+    return parsedData;
   } catch (err) {
     console.error('Error reading data file:', err);
-    return [];
+    // 出错时返回缓存数据或空数组
+    return postsCache || [];
   }
 };
 
@@ -45,6 +65,9 @@ const writeData = async (data) => {
   try {
     await writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
     console.log(`[SUCCESS] Data written to ${DATA_FILE}`);
+    // 更新缓存
+    postsCache = data;
+    lastPostsRead = Date.now();
     return true;
   } catch (err) {
     console.error('[ERROR] Failed to write data file:', err);
@@ -62,13 +85,22 @@ const isFileWritable = (filePath) => {
   }
 };
 
-// Helper to read talk data
+// Helper to read talk data with caching
 const readTalkData = async () => {
+  const now = Date.now();
+  // 如果有缓存且未过期，直接返回缓存数据
+  if (talkCache !== null && (now - lastTalkRead) < CACHE_DURATION) {
+    return talkCache;
+  }
+  
   // 首先检查是否可以访问文件系统
   if (fs.existsSync(TALK_FILE) && isFileWritable(TALK_FILE)) {
     try {
       const data = await readFile(TALK_FILE, 'utf8');
-      return JSON.parse(data || '[]');
+      const parsedData = JSON.parse(data || '[]');
+      talkCache = parsedData;
+      lastTalkRead = now;
+      return parsedData;
     } catch (err) {
       console.error('Error reading talk file:', err);
       // 回退到内存存储
@@ -83,6 +115,10 @@ const readTalkData = async () => {
 
 // Helper to write talk data with fallback to memory
 const writeTalkData = async (data) => {
+  // 更新缓存
+  talkCache = data;
+  lastTalkRead = Date.now();
+  
   // 尝试写入文件系统
   if (isFileWritable(TALK_FILE)) {
     try {
@@ -141,19 +177,29 @@ app.get('/api/talk/current-user', (req, res) => {
 // GET all posts
 app.get('/api/posts', async (req, res) => {
   console.log(`[GET] /api/posts - ${new Date().toISOString()}`);
-  const posts = await readData();
-  res.json(posts);
+  try {
+    const posts = await readData();
+    res.json(posts || []); // 确保总是返回数组
+  } catch (error) {
+    console.error('[ERROR] Failed to fetch posts:', error);
+    res.status(500).json([]); // 出错时返回空数组而不是错误
+  }
 });
 
 // GET single post
 app.get('/api/posts/:slug', async (req, res) => {
   console.log(`[GET] /api/posts/${req.params.slug}`);
-  const posts = await readData();
-  const post = posts.find(p => p.slug === req.params.slug);
-  if (post) {
-    res.json(post);
-  } else {
-    res.status(404).json({ message: 'Post not found' });
+  try {
+    const posts = await readData();
+    const post = posts.find(p => p.slug === req.params.slug);
+    if (post) {
+      res.json(post);
+    } else {
+      res.status(404).json({ message: 'Post not found' });
+    }
+  } catch (error) {
+    console.error('[ERROR] Failed to fetch post:', error);
+    res.status(500).json({ message: 'Failed to fetch post' });
   }
 });
 
@@ -166,29 +212,39 @@ app.post('/api/posts', async (req, res) => {
     return res.status(400).json({ message: 'Invalid post data' });
   }
 
-  const posts = await readData();
-  const existingIndex = posts.findIndex(p => p.slug === newPost.slug);
-  
-  if (existingIndex >= 0) {
-    console.log(`[UPDATE] Updating post: ${newPost.title}`);
-    posts[existingIndex] = newPost;
-  } else {
-    console.log(`[CREATE] Creating new post: ${newPost.title}`);
-    posts.unshift(newPost);
-  }
-  
-  if (await writeData(posts)) {
-    res.json(newPost);
-  } else {
-    res.status(500).json({ message: 'Failed to save post to disk' });
+  try {
+    const posts = await readData();
+    const existingIndex = posts.findIndex(p => p.slug === newPost.slug);
+    
+    if (existingIndex >= 0) {
+      console.log(`[UPDATE] Updating post: ${newPost.title}`);
+      posts[existingIndex] = newPost;
+    } else {
+      console.log(`[CREATE] Creating new post: ${newPost.title}`);
+      posts.unshift(newPost);
+    }
+    
+    if (await writeData(posts)) {
+      res.json(newPost);
+    } else {
+      res.status(500).json({ message: 'Failed to save post to disk' });
+    }
+  } catch (error) {
+    console.error('[ERROR] Failed to process post:', error);
+    res.status(500).json({ message: 'Failed to process post' });
   }
 });
 
 // GET all talk messages
 app.get('/api/talk', async (req, res) => {
   console.log(`[GET] /api/talk - ${new Date().toISOString()}`);
-  const talks = await readTalkData();
-  res.json(talks);
+  try {
+    const talks = await readTalkData();
+    res.json(talks || []); // 确保总是返回数组
+  } catch (error) {
+    console.error('[ERROR] Failed to fetch talk messages:', error);
+    res.status(500).json([]); // 出错时返回空数组而不是错误
+  }
 });
 
 // POST new talk message
@@ -200,38 +256,43 @@ app.post('/api/talk', async (req, res) => {
     return res.status(400).json({ message: 'Invalid message data' });
   }
 
-  // 获取客户端IP并加密作为用户名
-  const clientIP = getClientIP(req) || 'unknown';
-  const username = encryptIP(clientIP);
-  
-  // 创建新消息对象
-  const message = {
-    id: Date.now(),
-    time: new Date().toISOString(),
-    user: username, // 使用加密后的用户名而不是固定的'guest'
-    avatar: `https://www.weavefox.cn/api/bolt/unsplash_image?keyword=avatar&width=100&height=100&random=${username}`,
-    content: newMessage.content
-  };
+  try {
+    // 获取客户端IP并加密作为用户名
+    const clientIP = getClientIP(req) || 'unknown';
+    const username = encryptIP(clientIP);
+    
+    // 创建新消息对象
+    const message = {
+      id: Date.now(),
+      time: new Date().toISOString(),
+      user: username, // 使用加密后的用户名而不是固定的'guest'
+      avatar: `https://www.weavefox.cn/api/bolt/unsplash_image?keyword=avatar&width=100&height=100&random=${username}`,
+      content: newMessage.content
+    };
 
-  const talks = await readTalkData();
-  talks.push(message);
-  
-  // 只保留最新的50条消息
-  if (talks.length > 50) {
-    talks.shift();
-  }
-  
-  if (await writeTalkData(talks)) {
-    res.json(message);
-  } else {
-    res.status(500).json({ 
-      message: 'Failed to save message',
-      debug: {
-        talkFilePath: TALK_FILE,
-        talkFileExists: fs.existsSync(TALK_FILE),
-        talkFileWritable: isFileWritable(TALK_FILE)
-      }
-    });
+    const talks = await readTalkData();
+    talks.push(message);
+    
+    // 只保留最新的50条消息
+    if (talks.length > 50) {
+      talks.shift();
+    }
+    
+    if (await writeTalkData(talks)) {
+      res.json(message);
+    } else {
+      res.status(500).json({ 
+        message: 'Failed to save message',
+        debug: {
+          talkFilePath: TALK_FILE,
+          talkFileExists: fs.existsSync(TALK_FILE),
+          talkFileWritable: isFileWritable(TALK_FILE)
+        }
+      });
+    }
+  } catch (error) {
+    console.error('[ERROR] Failed to process talk message:', error);
+    res.status(500).json({ message: 'Failed to process talk message' });
   }
 });
 
