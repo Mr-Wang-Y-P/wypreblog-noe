@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import fs from 'fs';
-import { readFile, writeFile, copyFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -16,293 +16,280 @@ const PORT = 7894;
 const DATA_FILE = path.join(__dirname, 'posts.json');
 const TALK_FILE = path.join(__dirname, 'talk.json');
 
-// 内存缓存
+// 内存缓存，避免频繁读取文件
 let postsCache = null;
 let talkCache = null;
 let lastPostsRead = 0;
 let lastTalkRead = 0;
-const CACHE_DURATION = 1000; // 1秒
+const CACHE_DURATION = 1000; // 1秒缓存
 
-// 内存 fallback（用于 talk）
+// 写入锁，防止并发写入问题
+let writeLock = Promise.resolve();
+
+// 内存存储用于临时存储消息（当文件系统不可写时）
 let talkDataMemory = [];
 
-// 写入互斥锁（防止并发写冲突）
-let writeLock = Promise.resolve();
-const withWriteLock = (fn) => {
-  const next = writeLock.then(fn).catch(err => {
-    console.error('[WRITE LOCK ERROR]', err);
-    throw err;
-  });
-  writeLock = next;
-  return next;
-};
-
-// 安全解析 JSON，避免空/损坏文件导致崩溃
-const safeParseJSON = (data, defaultValue = []) => {
-  try {
-    return JSON.parse(data || '[]');
-  } catch (err) {
-    console.warn('[WARN] JSON parse failed, using default:', err.message);
-    return defaultValue;
-  }
-};
-
-// 启用 CORS 和 body parser
+// 启用 CORS 允许前端跨域请求
 app.use(cors());
+// 增加 payload 限制，防止大图片/长文章导致请求失败
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// 检查文件是否可写
-const isFileWritable = (filePath) => {
-  try {
-    fs.accessSync(filePath, fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-// 读取 posts（支持强制刷新）
-const readData = async (force = false) => {
+// Helper to read data with caching
+const readData = async () => {
   const now = Date.now();
-  if (!force && postsCache !== null && (now - lastPostsRead) < CACHE_DURATION) {
+  // 如果有缓存且未过期，直接返回缓存数据
+  if (postsCache !== null && (now - lastPostsRead) < CACHE_DURATION) {
     return postsCache;
   }
-
+  
   try {
     if (!fs.existsSync(DATA_FILE)) {
+      // 如果文件不存在，初始化为空数组
       await writeFile(DATA_FILE, '[]', 'utf8');
       postsCache = [];
-    } else {
-      const rawData = await readFile(DATA_FILE, 'utf8');
-      postsCache = safeParseJSON(rawData, []);
+      lastPostsRead = now;
+      return postsCache;
     }
+    
+    const data = await readFile(DATA_FILE, 'utf8');
+    const parsedData = JSON.parse(data || '[]');
+    postsCache = parsedData;
     lastPostsRead = now;
-    return postsCache;
+    return parsedData;
   } catch (err) {
-    console.error('Error reading posts file:', err);
+    console.error('Error reading data file:', err);
+    // 出错时返回缓存数据或空数组
     return postsCache || [];
   }
 };
 
-// 写入 posts（带互斥锁）
+// Helper to write data with lock
 const writeData = async (data) => {
-  return withWriteLock(async () => {
-    // 可选：备份原文件（高可靠场景）
-    // if (fs.existsSync(DATA_FILE)) await copyFile(DATA_FILE, `${DATA_FILE}.bak`);
-
-    await writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
-    postsCache = data;
-    lastPostsRead = Date.now();
-    console.log(`[SUCCESS] Posts written to ${DATA_FILE}`);
-    return true;
-  }).catch(err => {
-    console.error('[ERROR] Failed to write posts file:', err);
-    return false;
+  // 使用锁确保写入操作的原子性
+  writeLock = writeLock.then(async () => {
+    try {
+      await writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+      console.log(`[SUCCESS] Data written to ${DATA_FILE}`);
+      // 更新缓存
+      postsCache = data;
+      lastPostsRead = Date.now();
+      return true;
+    } catch (err) {
+      console.error('[ERROR] Failed to write data file:', err);
+      return false;
+    }
   });
+  
+  return writeLock;
 };
 
-// 读取 talk 数据
-const readTalkData = async (force = false) => {
+// Helper to check if file is writable
+const isFileWritable = (filePath) => {
+  try {
+    fs.accessSync(filePath, fs.constants.W_OK);
+    return true;
+  } catch (err) {
+    return false;
+  }
+};
+
+// Helper to read talk data with caching
+const readTalkData = async () => {
   const now = Date.now();
-  if (!force && talkCache !== null && (now - lastTalkRead) < CACHE_DURATION) {
+  // 如果有缓存且未过期，直接返回缓存数据
+  if (talkCache !== null && (now - lastTalkRead) < CACHE_DURATION) {
     return talkCache;
   }
-
+  
+  // 首先检查是否可以访问文件系统
   if (fs.existsSync(TALK_FILE) && isFileWritable(TALK_FILE)) {
     try {
-      const rawData = await readFile(TALK_FILE, 'utf8');
-      talkCache = safeParseJSON(rawData, []);
+      const data = await readFile(TALK_FILE, 'utf8');
+      const parsedData = JSON.parse(data || '[]');
+      talkCache = parsedData;
       lastTalkRead = now;
-      return talkCache;
+      return parsedData;
     } catch (err) {
       console.error('Error reading talk file:', err);
+      // 回退到内存存储
       return talkDataMemory;
     }
   } else {
+    // 如果文件不可访问，使用内存存储
     console.log('[INFO] Using memory storage for talk data');
     return talkDataMemory;
   }
 };
 
-// 写入 talk 数据（带互斥锁 + fallback）
+// Helper to write talk data with lock and fallback to memory
 const writeTalkData = async (data) => {
-  return withWriteLock(async () => {
-    talkCache = data;
-    lastTalkRead = Date.now();
-
+  // 更新缓存
+  talkCache = data;
+  lastTalkRead = Date.now();
+  
+  // 使用锁确保写入操作的原子性
+  writeLock = writeLock.then(async () => {
+    // 尝试写入文件系统
     if (isFileWritable(TALK_FILE)) {
       try {
+        // 确保目录存在
         const dir = path.dirname(TALK_FILE);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
         }
+        
+        // 写入文件
         await writeFile(TALK_FILE, JSON.stringify(data, null, 2), 'utf8');
         console.log(`[SUCCESS] Talk data written to ${TALK_FILE}`);
         return true;
       } catch (err) {
         console.error('[ERROR] Failed to write talk file:', err);
+        // 出错时回退到内存存储
         talkDataMemory = data;
         console.log('[INFO] Falling back to memory storage for talk data');
-        return true;
+        return true; // 返回true表示数据已保存（在内存中）
       }
     } else {
+      // 文件系统不可写，直接使用内存存储
       talkDataMemory = data;
-      console.log('[INFO] Using memory storage (filesystem not writable)');
+      console.log('[INFO] Using memory storage for talk data (filesystem not writable)');
       return true;
     }
   });
+  
+  return writeLock;
 };
 
-// 获取客户端 IP
+// Helper to get client IP address
 const getClientIP = (req) => {
-  return (
-    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-    req.headers['x-real-ip'] ||
-    req.connection?.remoteAddress ||
-    req.socket?.remoteAddress ||
-    (req.connection?.socket ? req.connection.socket.remoteAddress : null) ||
-    req.ip ||
-    'unknown'
-  );
+  // 尝试从各种可能的头部获取真实IP地址
+  return req.headers['x-forwarded-for'] ||
+         req.headers['x-real-ip'] ||
+         req.connection.remoteAddress ||
+         req.socket.remoteAddress ||
+         (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
+         req.ip;
 };
 
-// 加密 IP 为用户名
+// Helper to encrypt IP address as username
 const encryptIP = (ip) => {
+  // 使用 SHA-256 哈希函数加密 IP 地址
   const hash = crypto.createHash('sha256');
-  hash.update(ip || 'unknown');
-  return `user_${hash.digest('hex').substring(0, 12)}`;
+  hash.update(ip);
+  const encrypted = hash.digest('hex').substring(0, 12); // 取前12位作为用户名
+  return `user_${encrypted}`;
 };
 
-// --- Routes ---
-
+// GET current user info
 app.get('/api/talk/current-user', (req, res) => {
-  const clientIP = getClientIP(req);
+  const clientIP = getClientIP(req) || 'unknown';
   const username = encryptIP(clientIP);
   res.json({ user: username });
 });
 
+// GET all posts
 app.get('/api/posts', async (req, res) => {
   console.log(`[GET] /api/posts - ${new Date().toISOString()}`);
-  try {
-    const posts = await readData();
-    res.json({ data: posts || [], timestamp: new Date().toISOString() });
-  } catch (error) {
-    console.error('[ERROR] Fetch posts:', error);
-    res.status(500).json({ data: [], error: 'Failed to load posts' });
-  }
+  const posts = await readData();
+  res.json(posts);
 });
 
+// GET single post
 app.get('/api/posts/:slug', async (req, res) => {
   console.log(`[GET] /api/posts/${req.params.slug}`);
-  try {
-    const posts = await readData();
-    const post = posts.find(p => p.slug === req.params.slug);
-    if (post) {
-      res.json({ data: post });
-    } else {
-      res.status(404).json({ error: 'Post not found' });
-    }
-  } catch (error) {
-    console.error('[ERROR] Fetch single post:', error);
-    res.status(500).json({ error: 'Failed to fetch post' });
+  const posts = await readData();
+  const post = posts.find(p => p.slug === req.params.slug);
+  if (post) {
+    res.json(post);
+  } else {
+    res.status(404).json({ message: 'Post not found' });
   }
 });
 
+// POST create/update post
 app.post('/api/posts', async (req, res) => {
+  console.log(`[POST] /api/posts - Receiving data...`);
   const newPost = req.body;
+  
   if (!newPost || !newPost.slug) {
-    return res.status(400).json({ error: 'Invalid post data: missing slug' });
+    return res.status(400).json({ message: 'Invalid post data' });
   }
 
-  try {
-    const posts = await readData();
-    const existingIndex = posts.findIndex(p => p.slug === newPost.slug);
-
-    if (existingIndex >= 0) {
-      console.log(`[UPDATE] Post: ${newPost.title}`);
-      posts[existingIndex] = newPost;
-    } else {
-      console.log(`[CREATE] Post: ${newPost.title}`);
-      posts.unshift(newPost);
-    }
-
-    const success = await writeData(posts);
-    if (success) {
-      res.json({ data: newPost });
-    } else {
-      res.status(500).json({ error: 'Failed to save post to disk' });
-    }
-  } catch (error) {
-    console.error('[ERROR] Process post:', error);
-    res.status(500).json({ error: 'Internal server error' });
+  const posts = await readData();
+  const existingIndex = posts.findIndex(p => p.slug === newPost.slug);
+  
+  if (existingIndex >= 0) {
+    console.log(`[UPDATE] Updating post: ${newPost.title}`);
+    posts[existingIndex] = newPost;
+  } else {
+    console.log(`[CREATE] Creating new post: ${newPost.title}`);
+    posts.unshift(newPost);
+  }
+  
+  if (await writeData(posts)) {
+    res.json(newPost);
+  } else {
+    res.status(500).json({ message: 'Failed to save post to disk' });
   }
 });
 
+// GET all talk messages
 app.get('/api/talk', async (req, res) => {
   console.log(`[GET] /api/talk - ${new Date().toISOString()}`);
-  try {
-    const talks = await readTalkData();
-    res.json({ data: talks || [], timestamp: new Date().toISOString() });
-  } catch (error) {
-    console.error('[ERROR] Fetch talk:', error);
-    res.status(500).json({ data: [], error: 'Failed to load messages' });
-  }
+  const talks = await readTalkData();
+  res.json(talks);
 });
 
+// POST new talk message
 app.post('/api/talk', async (req, res) => {
+  console.log(`[POST] /api/talk - Receiving message...`);
   const newMessage = req.body;
-  if (!newMessage || !newMessage.content?.trim()) {
-    return res.status(400).json({ error: 'Invalid message: content is required' });
+  
+  if (!newMessage || !newMessage.content) {
+    return res.status(400).json({ message: 'Invalid message data' });
   }
 
-  try {
-    const clientIP = getClientIP(req);
-    const username = encryptIP(clientIP);
+  // 获取客户端IP并加密作为用户名
+  const clientIP = getClientIP(req) || 'unknown';
+  const username = encryptIP(clientIP);
+  
+  // 创建新消息对象
+  const message = {
+    id: Date.now(),
+    time: new Date().toISOString(),
+    user: username, // 使用加密后的用户名而不是固定的'guest'
+    avatar: `https://www.weavefox.cn/api/bolt/unsplash_image?keyword=avatar&width=100&height=100&random=${username}`,
+    content: newMessage.content
+  };
 
-    const message = {
-      id: Date.now(),
-      time: new Date().toISOString(),
-      user: username,
-      avatar: `https://www.weavefox.cn/api/bolt/unsplash_image?keyword=avatar&width=100&height=100&random=${username}`,
-      content: newMessage.content.trim()
-    };
-
-    const talks = await readTalkData();
-    talks.push(message);
-    if (talks.length > 50) talks.shift(); // 保留最新50条
-
-    const success = await writeTalkData(talks);
-    if (success) {
-      res.json({ data: message });
-    } else {
-      res.status(500).json({
-        error: 'Failed to save message',
-        debug: {
-          talkFilePath: TALK_FILE,
-          exists: fs.existsSync(TALK_FILE),
-          writable: isFileWritable(TALK_FILE)
-        }
-      });
-    }
-  } catch (error) {
-    console.error('[ERROR] Process talk message:', error);
-    res.status(500).json({ error: 'Internal server error' });
+  const talks = await readTalkData();
+  talks.push(message);
+  
+  // 只保留最新的50条消息
+  if (talks.length > 50) {
+    talks.shift();
+  }
+  
+  if (await writeTalkData(talks)) {
+    res.json(message);
+  } else {
+    res.status(500).json({ 
+      message: 'Failed to save message to disk',
+      debug: {
+        talkFilePath: TALK_FILE,
+        talkFileExists: fs.existsSync(TALK_FILE),
+        talkFileWritable: isFileWritable(TALK_FILE)
+      }
+    });
   }
 });
 
-// --- 启动服务器 ---
-(async () => {
-  // 预加载数据，避免首次请求为空
-  await readData();
-  await readTalkData();
-
-  app.listen(PORT, () => {
-    console.log(`
-🚀 Server running on http://localhost:${PORT}
-📂 Posts file: ${DATA_FILE}
-💬 Talk file:   ${TALK_FILE}
------------------------------------------------
-✅ Ready to accept requests from wyperBlog frontend
-    `);
-  });
-})();
+app.listen(PORT, () => {
+  console.log(`
+  🚀 Server running on http://localhost:${PORT}
+  📂 Data file: ${DATA_FILE}
+  💬 Talk file: ${TALK_FILE}
+  -----------------------------------------------
+  Ready to accept requests from wyperBlog frontend
+  `);
+});
