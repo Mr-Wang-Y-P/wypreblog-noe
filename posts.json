@@ -1,35 +1,50 @@
 [
   {
     "slug": "welcome",
-    "title": "Welcome to wyperBlog",
+    "title": "欢迎来到 wyperBlog",
     "date": "2024-06-11",
-    "tags": [
-      "meta",
-      "welcome"
-    ],
+    "tags": ["meta", "welcome", "markdown"],
     "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=cyberpunk,city&width=800&height=450&random=welcome",
-    "content": "# 欢迎来到 wyperBlog\n\n这是第一篇示例文章，展示了炫酷的首页与 Markdown 渲染能力。\n\n## 特性\n\n- 支持 **粗体** 与 *斜体*\n- 支持代码块：\n\n```js\nconsole.log('hello wyperBlog');\n```\n\n> 期待你的第一篇投稿！"
+    "content": "# 欢迎来到 wyperBlog\n\n这是第一篇示例文章，展示了炫酷的首页与 Markdown 渲染能力。\n\n## 特性\n\n- 支持 **粗体** 与 *斜体*\n- 支持代码块：\n\n```js\nconsole.log('hello wyperBlog');\n```\n\n> 期待你的第一篇投稿！\n\n---\n\n## 为什么选择 wyperBlog？\n\nwyperBlog 是一个极简、无数据库、基于文件系统的静态博客引擎。它不依赖复杂的 CMS，而是通过 JSON 或 Markdown 文件驱动内容，适合开发者、写作者和技术爱好者快速搭建个人知识库或博客站点。\n\n- 🚀 极快加载速度（纯静态资源）\n- 🔒 无需后端数据库，安全可靠\n- ✍️ 原生支持 Markdown，写作如呼吸般自然\n- 🌐 响应式设计，适配手机、平板与桌面\n\n现在，就用你熟悉的编辑器，开始书写属于你的数字篇章吧！"
   },
   {
     "slug": "react-hooks-deep-dive",
     "title": "React Hooks 深度解析",
     "date": "2024-06-10",
-    "tags": [
-      "react",
-      "frontend"
-    ],
+    "tags": ["react", "frontend", "javascript", "hooks"],
     "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=code,react&width=800&height=450&random=react",
-    "content": "# React Hooks 深度解析\n\n本文深入 useEffect、useMemo、useCallback 的原理与最佳实践。"
+    "content": "# React Hooks 深度解析：useEffect、useMemo 与 useCallback 的原理与最佳实践\n\nReact Hooks 自 2019 年发布以来，彻底改变了函数组件的开发方式。然而，许多开发者在使用 `useEffect`、`useMemo` 和 `useCallback` 时仍存在误解，导致性能问题或逻辑错误。\n\n## useEffect：副作用的正确管理\n\n`useEffect` 并非简单的“componentDidMount 替代品”。它的执行时机是**异步的**，发生在浏览器绘制之后。这意味着：\n\n- 不要用于测量 DOM 尺寸（应使用 `useLayoutEffect`）\n- 依赖数组必须包含所有引用的响应式变量\n- 清理函数会在下次 effect 执行前调用，确保资源释放\n\n```js\nuseEffect(() => {\n  const timer = setInterval(() => {\n    // 注意：此处闭包捕获的是初始 state\n  }, 1000);\n  return () => clearInterval(timer);\n}, []);\n```\n\n## useMemo 与 useCallback：缓存的艺术\n\n- `useMemo` 缓存**计算结果**\n- `useCallback` 缓存**函数引用**\n\n它们的核心价值在于**避免子组件不必要的重渲染**（配合 `React.memo`）。\n\n```js\nconst memoizedCallback = useCallback(\n  () => doSomething(a, b),\n  [a, b]\n);\n```\n\n> 💡 提示：不要为了“优化”而滥用。先用 React DevTools 分析性能瓶颈，再针对性使用。\n\n## 总结\n\nHooks 强大但需谨慎。理解其底层调度机制，才能写出高效、可维护的 React 应用。"
   },
   {
     "slug": "future-of-tech",
     "title": "科技的未来：AI 与人类",
     "date": "2024-06-12",
-    "tags": [
-      "ai",
-      "future"
-    ],
+    "tags": ["ai", "future", "ethics", "technology"],
     "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=robot,ai&width=800&height=450&random=ai",
-    "content": "# 科技的未来\n\n探讨人工智能如何重塑我们的生活方式。"
+    "content": "# 科技的未来：AI 与人类共舞的新纪元\n\n人工智能不再是科幻小说中的幻想，而是正在重塑医疗、教育、艺术乃至日常生活的现实力量。\n\n## AI 的双刃剑\n\n- ✅ **积极面**：疾病早期诊断、个性化教育、气候建模、自动化生产\n- ⚠️ **风险**：就业结构冲击、深度伪造、算法偏见、隐私侵蚀\n\n## 人机协作，而非替代\n\n未来的关键不是“AI 取代人类”，而是“**人类如何驾驭 AI**”。医生借助 AI 分析影像，作家用 LLM 激发灵感，工程师通过 Copilot 提升效率——这才是可持续的路径。\n\n> “技术本身没有善恶，关键在于使用它的人。”\n\n## 我们的责任\n\n作为技术从业者或普通用户，我们都应：\n\n1. 关注 AI 伦理与透明度\n2. 推动可解释性（XAI）发展\n3. 保护数据主权与数字人权\n\n科技的终点，始终是服务于人的尊严与自由。"
+  },
+  {
+    "slug": "frontend-tooling-2025",
+    "title": "2025 前端工程化全景图",
+    "date": "2025-01-15",
+    "tags": ["frontend", "tooling", "vite", "bun", "web-dev"],
+    "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=terminal,code&width=800&height=450&random=tooling",
+    "content": "# 2025 前端工程化全景图：速度、体验与开发者幸福感\n\n前端工具链正经历一场静默革命。从构建工具到运行时，一切都在向更快、更轻、更智能演进。\n\n## 构建工具：Vite 已成主流，Bun 蓄势待发\n\n- **Vite 5+**：原生支持 SSR、微前端集成、TypeScript 零配置\n- **Bun**：JavaScript 运行时 + 包管理器 + 测试框架三位一体，启动速度比 Node 快 3-4 倍\n\n## 状态管理：回归简单\n\nRedux 使用率持续下降，取而代之的是：\n\n- **Zustand**：轻量、无样板代码\n- **Jotai / Recoil**：原子化状态，天然支持并发更新\n\n## 类型安全：TypeScript 全面普及\n\n- 组件 props 自动推导\n- API 请求 schema 校验（如 Zod + tRPC）\n- CSS-in-JS 类型提示（如 Vanilla Extract）\n\n## 未来趋势\n\n- **编译时优化**：Astro、Qwik 的“零 hydration”理念\n- **WebContainers**：在浏览器中运行 Node.js，实现在线 IDE 新范式\n\n> 工具的意义，是让开发者专注创造，而非配置。"
+  },
+  {
+    "slug": "art-of-writing",
+    "title": "写作即思考：数字时代的表达哲学",
+    "date": "2025-03-22",
+    "tags": ["writing", "thinking", "blog", "philosophy"],
+    "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=typewriter,notebook&width=800&height=450&random=writing",
+    "content": "# 写作即思考：数字时代的表达哲学\n\n在这个信息爆炸的时代，写作不再只是记录，而是一种**深度思考的仪式**。\n\n## 为什么还要写博客？\n\n- 🧠 **外化思维**：将模糊的想法转化为清晰的文字，本身就是一次认知升级\n- 🌱 **知识沉淀**：对抗数字遗忘，构建个人第二大脑\n- 🤝 **连接同好**：真诚的文字会吸引志同道合的灵魂\n\n## 好文章的三个特质\n\n1. **真诚**：不为流量写作，而为厘清自己\n2. **结构**：有起承转合，逻辑如溪流般自然\n3. **留白**：给读者思考空间，而非填鸭式输出\n\n## 从“能写”到“愿写”\n\n不必追求完美。第一稿可以粗糙，但必须开始。正如 Hemingway 所言：\n\n> “一切初稿都是狗屎。”\n\n重要的是，在键盘上敲下第一个字。wyperBlog 正是为此而生——一个让你安心写作的数字角落。\n\n所以，今天，写下你的第一句吧。"
+  },
+  {
+    "slug": "web-security-basics",
+    "title": "Web 安全入门：每个开发者都该知道的 5 件事",
+    "date": "2025-05-01",
+    "tags": ["security", "web", "developer", "best-practices"],
+    "cover": "https://www.weavefox.cn/api/bolt/unsplash_image?keyword=lock,security&width=800&height=450&random=security",
+    "content": "# Web 安全入门：每个开发者都该知道的 5 件事\n\n安全不是“别人的事”。即使你只写前端，也必须了解基本的安全原则。\n\n## 1. XSS（跨站脚本攻击）\n\n- **风险**：恶意脚本在用户浏览器执行\n- **防御**：永远不要 `innerHTML = userInput`；使用框架自动转义（React/Vue 默认安全）\n\n## 2. CSRF（跨站请求伪造）\n\n- **风险**：用户在已登录状态下被诱导发起恶意请求\n- **防御**：使用 SameSite Cookie + Anti-CSRF Token\n\n## 3. 敏感信息泄露\n\n- ❌ 不要在前端代码中硬编码 API 密钥\n- ❌ 不要将用户密码明文传输\n- ✅ 使用 HTTPS + 后端代理敏感请求\n\n## 4. 依赖安全\n\n- 定期运行 `npm audit` 或 `yarn audit`\n- 使用 Dependabot 自动更新漏洞依赖\n\n## 5. 内容安全策略（CSP）\n\n通过 HTTP 头限制可加载资源：\n\n```\nContent-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'\n```\n\n> 安全是持续的过程，而非一次性任务。从小处着手，养成安全编码习惯。\n\n记住：你写的每一行代码，都可能成为攻击者的入口，也可能成为用户的盾牌。"
   }
 ]
